@@ -1,0 +1,69 @@
+name: ci-linux
+on:
+  pull_request:
+  push:
+    branches:
+      - 'main'
+jobs:
+  style:
+    runs-on: ubuntu-latest
+    steps:
+      # install deps.
+      - name: install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fd-find
+      - uses: actions/checkout@v2
+
+      - name: Cache .cabal
+        id: cachecabal
+        uses: actions/cache@v3
+        with:
+          path: ~/.cabal
+          key: cabal-style-${{ hashFiles('cabal.project') }}-${{ hashFiles('**/*.cabal') }}
+
+      - uses: haskell/actions/setup@v1
+        with:
+          ghc-version: '9.2.8'
+          cabal-version: '3.10.1.0'
+
+      - name: Build dependencies for integration test
+        run: |
+          cabal update
+          cabal install -j cabal-fmt-0.1.7 stylish-haskell-0.14.5.0 --overwrite-policy=always
+
+      - name: Stylish haskell
+        run: |
+          ./fix-stylish-haskell.sh
+          git diff --exit-code
+
+      - name: cabal-fmt
+        run: |
+          ./fix-cabal-fmt.sh
+          git diff --exit-code
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # install deps.
+      - name: install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsystemd-dev librocksdb-dev
+
+      - uses: actions/checkout@v2
+
+      - name: Cache .cabal
+        uses: actions/cache@v3
+        with:
+          path: ~/.cabal
+          key: cabal-${{ hashFiles('cabal.project') }}-${{ hashFiles('**/*.cabal') }}
+
+      - uses: haskell/actions/setup@v1
+        with:
+          ghc-version: '9.2.8'
+          cabal-version: '3.10.1.0'
+
+      - name: build
+        run: |
+          cabal build -j all
