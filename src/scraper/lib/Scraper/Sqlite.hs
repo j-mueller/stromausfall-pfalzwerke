@@ -29,7 +29,7 @@ module Scraper.Sqlite(
 import           Control.Concurrent                       (threadDelay)
 import           Control.Exception                        (catch, throw)
 import           Control.Lens                             (makeLenses)
-import           Control.Monad                            (unless, void)
+import           Control.Monad                            (unless, void, when)
 import           Control.Monad.IO.Class                   (MonadIO (..))
 import           Data.Aeson                               (decodeFileStrict)
 import           Data.Either                              (partitionEithers)
@@ -40,7 +40,9 @@ import           Data.Pool                                (Pool)
 import qualified Data.Pool                                as Pool
 import           Data.Text                                (Text)
 import qualified Data.Text                                as Text
-import           Data.Time                                (UTCTime)
+import           Data.Time                                (UTCTime (utctDay),
+                                                           diffUTCTime)
+import           Data.Time.Calendar.OrdinalDate           (toOrdinalDate)
 import           Database.Beam                            (Beamable, Columnar,
                                                            Database,
                                                            DatabaseEntity,
@@ -87,8 +89,9 @@ data OutageEntryT f
       , _outageEntryType                 :: Columnar f Int32
       , _outageEntryorigin               :: Columnar f Int32
       , _outageEntrygeoType              :: Columnar f Int32
-      , _outageEntrydateStart            :: Columnar f UTCTime -- TODO UTCTime
-      , _outageEntrydateEnd              :: Columnar f UTCTime -- TODO UTCTime
+      , _outageEntrydateStart            :: Columnar f UTCTime
+      , _outageEntrydateEnd              :: Columnar f UTCTime
+      , _outageEntryDurationMinutes      :: Columnar f Int32
       , _outageEntrylastUpdate           :: Columnar f Text
       , _outageEntrypostalCode           :: Columnar f Text
       , _outageEntrycity                 :: Columnar f Text
@@ -122,12 +125,15 @@ instance Table OutageEntryT where
 
 data ConversionError =
   FailedToConvert{column :: String, contents :: String, id_ :: Integer}
+  | DateStartTooOld{value :: UTCTime, id_ :: Integer}
   deriving Show
 
 entryToRow :: Entry -> Either ConversionError OutageEntryRow
 entryToRow entry = do
   _outageEntrydateStart <- maybe (Left FailedToConvert{column="dateStart", contents=Entry._dateStart entry, id_=Entry._id entry}) pure (parseDate (Entry._dateStart entry))
   _outageEntrydateEnd <- maybe (Left FailedToConvert{column="dateEnd", contents=Entry._dateEnd entry, id_=Entry._id entry}) pure (parseDate (Entry._dateEnd entry))
+  let _outageEntryDurationMinutes = round $ (_outageEntrydateEnd `diffUTCTime` _outageEntrydateStart) / 60
+  when (fst (toOrdinalDate (utctDay _outageEntrydateStart)) < 2023) $ Left DateStartTooOld{value=_outageEntrydateStart, id_=Entry._id entry}
   pure $
     OutageEntryT
         { _outageEntryId                   = fromIntegral (Entry._id entry)
@@ -138,6 +144,7 @@ entryToRow entry = do
         , _outageEntrygeoType              = fromIntegral (Entry._geoType entry)
         , _outageEntrydateStart
         , _outageEntrydateEnd
+        , _outageEntryDurationMinutes
         , _outageEntrylastUpdate           = Text.pack (Entry._lastUpdate entry)
         , _outageEntrypostalCode           = Text.pack (Entry._postalCode entry)
         , _outageEntrycity                 = Text.pack (Entry._city entry)
@@ -190,7 +197,8 @@ insertBatch tbl rows =
     (onConflictUpdateSet $ \fields _oldValue ->
       let u1 = _outageEntrydateEnd fields <-. current_ (_outageEntrydateEnd fields)
           u2 = _outageEntrylastUpdate fields <-. current_ (_outageEntrylastUpdate fields)
-      in u1 <> u2
+          u3 = _outageEntryDurationMinutes fields <-. current_ (_outageEntryDurationMinutes fields)
+      in u1 <> u2 <> u3
     )
 
 {-| Import a stream of rows into a sqlite DB
