@@ -2,7 +2,8 @@
 module Scraper.Types(
   Entry(..),
   getEntries,
-  saveOutagesToFolder
+  saveOutagesToFolder,
+  parseDate
 ) where
 
 import           Data.Aeson                 (FromJSON (..), ToJSON (..), Value,
