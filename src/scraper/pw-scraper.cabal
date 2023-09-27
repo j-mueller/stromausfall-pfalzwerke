@@ -54,17 +54,27 @@ library
   hs-source-dirs:  lib
   exposed-modules:
     Scraper
+    Scraper.Command
+    Scraper.Sqlite
     Scraper.Types
 
   build-depends:
     , aeson
     , aeson-pretty
     , base
+    , beam-core
+    , beam-migrate
+    , beam-sqlite
     , bytestring
     , directory
     , filepath
+    , lens
     , optparse-applicative
     , req
+    , resource-pool         >=0.3.1.0  && <0.4.0.0
+    , sqlite-simple         >=0.4.18.2
+    , streaming
+    , text
     , time
 
 executable pw-scraper
