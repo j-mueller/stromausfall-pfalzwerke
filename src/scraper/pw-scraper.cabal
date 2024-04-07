@@ -1,12 +1,12 @@
 cabal-version: 2.2
 name:          pw-scraper
-version:       0.1.0.0
+version:       0.2.0.0
 synopsis:      JS API scraper
 license-file:  LICENSE
 license:       Apache-2.0
 author:        Jann Müller <j-mueller@users.noreply.github.com>
 maintainer:    Jann Müller <j-mueller@users.noreply.github.com>
-copyright:     (c) 2023 Jann Müller
+copyright:     (c) 2024 Jann Müller
 build-type:    Simple
 
 common lang
