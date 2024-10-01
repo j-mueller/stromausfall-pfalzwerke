@@ -21,9 +21,8 @@ module Scraper.Sqlite(
   imports,
 
   -- * Etc.
-  filesWithExtension,
-  importJSONFiles,
-  ImportArgs(..)
+  ImportArgs(..),
+  importEntriesFromAPI
 ) where
 
 import           Control.Concurrent                       (threadDelay)
@@ -31,11 +30,8 @@ import           Control.Exception                        (catch, throw)
 import           Control.Lens                             (makeLenses)
 import           Control.Monad                            (unless, void, when)
 import           Control.Monad.IO.Class                   (MonadIO (..))
-import           Data.Aeson                               (decodeFileStrict)
-import           Data.Either                              (partitionEithers)
 import           Data.Functor.Identity                    (Identity (..))
 import           Data.Int                                 (Int32)
-import           Data.Maybe                               (catMaybes)
 import           Data.Pool                                (Pool)
 import qualified Data.Pool                                as Pool
 import           Data.Text                                (Text)
@@ -67,16 +63,15 @@ import qualified Database.Beam.Sqlite.Migrate             as Sqlite
 import           Database.SQLite.Simple                   (Connection)
 import qualified Database.SQLite.Simple                   as Sqlite
 import           GHC.Generics                             (Generic)
+import           Network.HTTP.Req                         (responseBody)
 import qualified Scraper.Types                            as Entry
-import           Scraper.Types                            (Entry, parseDate)
+import           Scraper.Types                            (Entry, getEntries,
+                                                           parseDate)
 import qualified Streaming                                as S
 import           Streaming                                (Stream)
 import qualified Streaming.Prelude                        as S
 import           Streaming.Prelude                        (Of)
-import           System.Directory                         (doesDirectoryExist,
-                                                           doesFileExist,
-                                                           listDirectory)
-import           System.FilePath                          (takeExtension, (</>))
+import           System.Directory                         (doesFileExist)
 
 instance HasDefaultSqlDataType Sqlite UTCTime where
   defaultSqlDataType _ _ _ = timestampType Nothing True
@@ -132,7 +127,7 @@ entryToRow :: Entry -> Either ConversionError OutageEntryRow
 entryToRow entry = do
   _outageEntrydateStart <- maybe (Left FailedToConvert{column="dateStart", contents=Entry._dateStart entry, id_=Entry._id entry}) pure (parseDate (Entry._dateStart entry))
   _outageEntrydateEnd <- maybe (Left FailedToConvert{column="dateEnd", contents=Entry._dateEnd entry, id_=Entry._id entry}) pure (parseDate (Entry._dateEnd entry))
-  let _outageEntryDurationMinutes = round $ (_outageEntrydateEnd `diffUTCTime` _outageEntrydateStart) / 60
+  let _outageEntryDurationMinutes = round $ abs $ (_outageEntrydateEnd `diffUTCTime` _outageEntrydateStart) / 60
   when (fst (toOrdinalDate (utctDay _outageEntrydateStart)) < 2023) $ Left DateStartTooOld{value=_outageEntrydateStart, id_=Entry._id entry}
   pure $
     OutageEntryT
@@ -226,44 +221,22 @@ trySqlite action =
 maxRows :: Int
 maxRows = 500
 
-{-| Search for files with the given extension (including leading '.') recursively
--}
-filesWithExtension :: MonadIO m => FilePath -> String -> Stream (Of FilePath) m ()
-filesWithExtension dir ext = flip S.for S.each $ flip S.unfoldr [dir] $ \dirs ->
-  case dirs of
-    [] -> pure (Left ())
-    x:xs -> do
-      contents <- fmap (x </>) <$> liftIO (listDirectory x)
-      (dirs', files) <- partitionEithers . catMaybes <$> sequence (fmap (liftIO . checkFile ext) contents)
-      pure $ Right (files, dirs' ++ xs)
-
-{-| Check whether a filepath has the given extension, and if it doesn't, check if
-  the path denotes a directory.
-  Returns @Just (Left fp)@ if @fp@ is a directory. Returns @Just (Right fp)@ if
-  @fp@ has the given extension. Returns @Nothing@ otherwise.
--}
-checkFile :: String -> FilePath -> IO (Maybe (Either FilePath FilePath))
-checkFile ext fp
-  | takeExtension fp == ext = pure (Just (Right fp))
-  | otherwise = do
-      x <- doesDirectoryExist fp
-      if x then pure (Just (Left fp)) else pure Nothing
-
-readJSONFiles :: MonadIO m => Stream (Of FilePath) m r -> Stream (Of Entry) m r
-readJSONFiles = S.mapMaybeM (liftIO . decodeFileStrict)
-
-data ImportArgs =
+newtype ImportArgs =
   ImportArgs
-    { rootFolder   :: FilePath -- ^ Root of the directory tree that will be scanned for JSON files
-    , sqliteDbFile :: FilePath -- ^ The sqlite database
+    { sqliteDbFile :: FilePath -- ^ The sqlite database
     }
-    deriving (Eq, Show)
+    deriving stock (Eq, Show)
 
-importJSONFiles :: ImportArgs -> IO ()
-importJSONFiles ImportArgs{rootFolder, sqliteDbFile} = do
+{-| Download the latest outage info from the API and save it to the
+sqlite database.
+-}
+importEntriesFromAPI :: ImportArgs -> IO ()
+importEntriesFromAPI ImportArgs{sqliteDbFile} = do
   pool <- sqlitePool sqliteDbFile
   createDb sqliteDbFile pool
-  imports (_dbOutageEntries db) pool (dropLeftsWithLog $ S.map entryToRow $ readJSONFiles $ filesWithExtension rootFolder ".json")
+  entries <- responseBody <$> getEntries
+  imports (_dbOutageEntries db) pool
+    (dropLeftsWithLog $ S.map entryToRow $ S.each entries)
   Pool.withResource pool $ \conn -> runBeamSqlite conn (Beam.runSelectReturningOne totalEntries) >>= \case
     Nothing -> putStrLn "Import succeeded, query failed"
     Just i -> putStrLn $ "Found " <> show i <> " entries"
@@ -287,7 +260,7 @@ sqlitePool db' =
 
 dropLeftsWithLog :: (Show e, MonadIO m) => Stream (Of (Either e a)) m r -> Stream (Of a) m r
 dropLeftsWithLog = S.mapMaybeM m where
-  m (Left e)  = liftIO (putStrLn (show e)) >> pure Nothing
+  m (Left e)  = liftIO (print e) >> pure Nothing
   m (Right a) = pure (Just a)
 
 totalEntries :: SqlSelect Sqlite Int32

@@ -5,10 +5,10 @@ Command line tool that scrapes the [störungsauskunft.de](stoerungsauskunft.de) 
 ## Usage
 
 ```bash
-cabal run pw-scraper -- -p <folder>
+cabal run pw-scraper -- [FILE]
 ```
 
-Downloads the latest data and saves it to the specified folder. Creates a file for each entry and a subdirectory for each day. 
+Downloads the latest data and saves it to a sqlite database. Existing entries will be updated.
 
 ## Contributing
 
