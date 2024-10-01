@@ -1,8 +1,8 @@
 
 index-state:
-  , hackage.haskell.org 2024-04-07T05:58:34Z
+  , hackage.haskell.org 2024-10-01T05:33:58Z
 
 packages:
   src/scraper
 
-with-compiler: ghc-9.2.8
+with-compiler: ghc-9.4.8
