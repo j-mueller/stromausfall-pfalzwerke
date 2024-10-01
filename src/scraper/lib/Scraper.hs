@@ -3,32 +3,23 @@ module Scraper(
   runScraper
 ) where
 
-import           Options.Applicative (Parser, customExecParser, disambiguate,
-                                      fullDesc, headerDoc, help, helper, info,
-                                      long, metavar, prefs, progDesc, short,
-                                      showHelpOnEmpty, showHelpOnError,
-                                      strOption)
-import           Scraper.Command     (Command (..), parseCommand)
-import           Scraper.Sqlite      (ImportArgs (..), importJSONFiles)
-import qualified Scraper.Types
+import           Options.Applicative (customExecParser, disambiguate, fullDesc,
+                                      headerDoc, helper, info, prefs, progDesc,
+                                      showHelpOnEmpty, showHelpOnError)
+import           Scraper.Command     (Command (..), parseScrape)
+import           Scraper.Sqlite      (ImportArgs (..), importEntriesFromAPI)
 
 runScraper :: IO ()
 runScraper = do
-  let p = (,) <$> parsePath <*> parseCommand
-  (rootFolder, command) <- customExecParser
+  command <- customExecParser
           (prefs $ disambiguate <> showHelpOnEmpty <> showHelpOnError)
-          (info (helper <*> p)
-            (fullDesc <> progDesc "The command-line interface for pw-scraper"
+          (info (helper <*> parseScrape)
+            (fullDesc <> progDesc "The command-line interface for pw-scraper. Downloads the latest data and saves it to a sqlite database. Existing entries will be updated."
             <> headerDoc (Just "pw-scraper")
             )
           )
-  case command of
-    Scrape -> do
-      putStrLn $ "Writing files to " <> rootFolder
-      Scraper.Types.saveOutagesToFolder rootFolder
-    Export{outFile} -> do
-      putStrLn $ "Loading JSON files from " <> rootFolder <> " into " <> outFile
-      importJSONFiles ImportArgs{rootFolder, sqliteDbFile=outFile}
 
-parsePath :: Parser FilePath
-parsePath = strOption (long "path" <> short 'p' <> metavar "FILEPATH" <> help "The directory where the json files will be saved")
+  case command of
+    Scrape{outFile} -> do
+      putStrLn $ "Writing outages data to " <> outFile
+      importEntriesFromAPI ImportArgs{sqliteDbFile=outFile}
